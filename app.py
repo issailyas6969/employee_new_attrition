@@ -1,66 +1,74 @@
 import streamlit as st
 import pandas as pd
-import joblib
-import os
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.linear_model import LinearRegression
+from sklearn.pipeline import Pipeline
 
-# ----------------------------
-# Load trained model
-# ----------------------------
-MODEL_PATH = "model/model.pkl"
-TEMPLATE_PATH = "model/template_columns.csv"
+st.title("💼 Employee Attrition Cost Predictor")
 
-if not os.path.exists(MODEL_PATH):
-    st.error(f"Model file not found at {MODEL_PATH}")
-    st.stop()
+# Load dataset
+@st.cache_data
+def load_data():
+    df = pd.read_csv("WA_Fn-UseC_-HR-Employee-Attrition.csv")
+    df['AttritionCost'] = df['MonthlyIncome'] * 3  # Example formula
+    return df
 
-if not os.path.exists(TEMPLATE_PATH):
-    st.error(f"Template file not found at {TEMPLATE_PATH}")
-    st.stop()
+df = load_data()
 
-model = joblib.load(MODEL_PATH)
-template = pd.read_csv(TEMPLATE_PATH)
+# Features and target
+X = df.drop(columns=['MonthlyIncome', 'Attrition', 'AttritionCost'])
+y = df['AttritionCost']
 
-st.title("Employee Attrition Cost Predictor 💼💰")
+# Convert Gender to numeric
+X['Gender'] = X['Gender'].map({'Male':1, 'Female':0})
 
-st.markdown("""
-Predict the potential attrition cost of an employee based on their details.
-""")
+# Define categorical features
+categorical_features = ['JobRole','BusinessTravel','Department']
+binary_features = ['Gender']
 
-# ----------------------------
-# User Input
-# ----------------------------
-st.sidebar.header("Employee Details")
+# Column Transformer
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features),
+        ('num','passthrough', [col for col in X.columns if col not in categorical_features + binary_features])
+    ]
+)
 
-def get_user_input():
-    user_input = {}
-    for col in template.columns:
-        if template[col].dtype == "int64" or template[col].dtype == "float64":
-            user_input[col] = st.sidebar.number_input(f"{col}", value=int(template[col].mean()))
-        else:
-            # If categorical, show a selectbox with unique values from template
-            user_input[col] = st.sidebar.selectbox(f"{col}", template[col].unique())
-    return pd.DataFrame([user_input])
+# Pipeline
+pipeline = Pipeline([
+    ('preprocessor', preprocessor),
+    ('regressor', LinearRegression())
+])
 
-input_data = get_user_input()
+# Train pipeline
+pipeline.fit(X, y)
 
-st.subheader("Entered Employee Data")
-st.write(input_data)
+st.subheader("Enter Employee Details:")
 
-# ----------------------------
-# Align template
-# ----------------------------
-# Make sure all template columns exist after encoding
-for col in template.columns:
-    if col not in input_data.columns:
-        input_data[col] = template[col].iloc[0]
+# User Inputs
+age = st.number_input("Age", min_value=18, max_value=60, value=30)
+gender = st.selectbox("Gender", ['Male','Female'])
+job_role = st.selectbox("Job Role", X['JobRole'].unique())
+department = st.selectbox("Department", X['Department'].unique())
+business_travel = st.selectbox("Business Travel", X['BusinessTravel'].unique())
 
-# ----------------------------
-# Prediction
-# ----------------------------
+# Prepare input for prediction
+input_df = pd.DataFrame({
+    'Age':[age],
+    'Gender':[1 if gender=='Male' else 0],
+    'JobRole':[job_role],
+    'Department':[department],
+    'BusinessTravel':[business_travel]
+})
+
+# Fill remaining numeric columns with median
+for col in [c for c in X.columns if c not in input_df.columns]:
+    input_df[col] = X[col].median()
+
+# Predict
 if st.button("Predict Attrition Cost"):
-    try:
-        prediction = model.predict(input_data)[0]
-        st.success(f"💸 Predicted Attrition Cost: ${prediction:,.2f}")
-    except Exception as e:
-        st.error(f"Error in prediction: {e}")
+    prediction = pipeline.predict(input_df)[0]
+    st.success(f"Predicted Attrition Cost: ${prediction:,.2f}")
 
